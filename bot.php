@@ -37,12 +37,21 @@ while (true) {
             if ($updateId > $lastUpdateId) {
                 $lastUpdateId = $updateId; // Обновляем последний update_id
 
-                // Обработка сообщений
+                // ОБРАБОТКА СООБЩЕНИЙ //
+                // Инициализация переменной callbackData/TG_USER_ID
+                $callbackData = null;
+                $TG_USER_ID = null;
                 if (isset($update['message']['text']) && isset($update['message']['chat']['id'])) {
                     $textMessageR = $update['message']['text']; // Текст сообщения
                     $TG_USER_ID = $update['message']['chat']['id']; // ID пользователя
-
+                    $messageId = $update['message']['message_id'];
                     echo "Получено сообщение: " . $textMessageR . "\n";
+                    // Проверка на наличие callback_query
+                    if (isset($update['callback_query']) && isset($update['callback_query']['data'])) {
+                        $TG_USER_ID = $update['callback_query']['chat']['id'];
+                        $callbackData = $update['callback_query']['data'];  // Получаем данные callback
+                    }
+                   
 
                     // Команда /info
                     if ($textMessageR === "/info") {
@@ -52,7 +61,8 @@ while (true) {
                         ];
                         sendMessage($data); // Отправляем сообщение пользователю
                     }
-
+                    
+                    
                     // Команда /menu
                     if ($textMessageR === "/menu") {
                         $keyboard = [
@@ -78,15 +88,14 @@ while (true) {
                         sendMessage($data); // Отправляем меню пользователю
                     }
                 }
+            
+                // Обработка callback_query, если есть
 
-                // Обработка callback_query
-                if (isset($update['callback_query'])) {
-                    $callbackQuery = $update['callback_query'];
-                    $callbackData = $callbackQuery['data']; // Получаем callback_data
-                    $messageId = $callbackQuery['message']['message_id'];
-                    $TG_USER_ID = $callbackQuery['from']['id'];
+                // Инициализация переменной перед проверкой
+                $responseText = ''; // Убедитесь, что переменная инициализирована перед использованием
 
-                    // Обработка каждого типа callback_data
+                if ($callbackData !== null) {
+                
                     switch ($callbackData) {
                         case "pizza":
                             $responseText = "Вы выбрали пиццу!";
@@ -100,10 +109,9 @@ while (true) {
                         case "drinks":
                             $responseText = "Вы выбрали напитки!";
                             break;
-                        default:
-                            $responseText = "Неизвестный товар.";
-                            break;
+
                     }
+                }
 
                     // Редактируем сообщение с выбранным товаром
                     $data = [
@@ -111,17 +119,17 @@ while (true) {
                         'message_id' => $messageId,
                         'text' => $responseText,
                     ];
-                    editMessageText($data); // Редактируем сообщение
+                    sendMessage($data); // Редактируем сообщение
                 }
-
+            
                 // Сохраняем последний update_id в файл, чтобы избежать повторов
                 file_put_contents(OFFSET_FILE, $lastUpdateId);
             }
         }
-    }
+}
 
     sleep(2); // Ждем 2 секунды перед следующим запросом
-}
+
 
 // Функция для отправки сообщения
 function sendMessage($data) {
@@ -147,7 +155,9 @@ function editMessageText($data) {
     curl_exec($ch); // Выполняем запрос
     curl_close($ch); // Закрываем сессию
 }
-
+if (curl_errno($ch)) {
+    error_log("cURL error: " . curl_error($ch));
+}
 
     
 
@@ -166,6 +176,6 @@ function editMessageText($data) {
 
 
 
-// t: && cd T:\OSPanel\domains\Doonpablobot && php bot.php && echo "Скрипт завершен успешно!"
+// t: && cd T:\OSPanel\domains\Doonpablobot && php bot.php 
 // cd C:\ospanel\domains\Doonpablobot && php bot.php
 ?>
