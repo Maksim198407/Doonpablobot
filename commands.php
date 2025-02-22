@@ -1,29 +1,126 @@
 <?php
 
-$token = 'YOUR_BOT_TOKEN';
-$url = "https://api.telegram.org/bot7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4/setMyCommands";
+set_time_limit(0);
 
-// Список доступных команд
-$commands = [
-    ['command' => '', 'description' => 'Запуск бота'],
-    ['command' => 'menu', 'description' => 'Открыть меню'],
-    ['command' => 'help', 'description' => 'Помощь'],
-    ['command' => 'info', 'description' => 'Информация о боте'],
-];
+define("TG_TOKEN", "7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4");
+define("OFFSET_FILE", "last_update.txt");
 
-// Формируем данные
-$data = [
-    'commands' => json_encode($commands, JSON_UNESCAPED_UNICODE),
-];
+// Подключение к базе данных
+try {
+    $pdo = new PDO("mysql:host=localhost;dbname=telegram_bott;charset=utf8", "root", "", [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+    ]);
+} catch (PDOException $e) {
+    exit("Ошибка подключения к БД: " . $e->getMessage());
+}
 
-// Отправляем запрос в Telegram API
-$ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, $url);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-curl_setopt($ch, CURLOPT_POST, 1);
-curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-$result = curl_exec($ch);
-curl_close($ch);
+$lastUpdateId = file_exists(OFFSET_FILE) ? (int) file_get_contents(OFFSET_FILE) : 0;
 
-echo $result;  // Выведет JSON-ответ от Telegram ({"ok":true,...})
+while (true) {
+    $urlQueryTE = "https://api.telegram.org/bot" . TG_TOKEN . "/getUpdates?offset=" . ($lastUpdateId + 1);
+    $response = file_get_contents($urlQueryTE);
+    $data = json_decode($response, true);
+
+    if (!empty($data['result'])) {
+        foreach ($data['result'] as $update) {
+            $updateId = $update['update_id'];
+            if ($updateId > $lastUpdateId) {
+                $lastUpdateId = $updateId;
+                file_put_contents(OFFSET_FILE, $lastUpdateId);
+                
+                if (isset($update['message']['text'], $update['message']['chat']['id'])) {
+                    processMessage($update['message']);
+                }
+                if (isset($update['callback_query'])) {
+                    processCallback($update['callback_query']);
+                }
+            }
+        }
+    }
+    sleep(2);
+}
+
+function processMessage($message) {
+    global $pdo;
+    $TG_USER_ID = $message['chat']['id'];
+    $TG_USERNAME = $message['chat']['username'] ?? 'unknown';
+    $textMessageR = $message['text'];
+    
+    try {
+        $stmt = $pdo->prepare("INSERT INTO users (user_id, username) VALUES (:user_id, :username) ON DUPLICATE KEY UPDATE username = :username");
+        $stmt->execute(["user_id" => $TG_USER_ID, "username" => $TG_USERNAME]);
+    } catch (PDOException $e) {
+        error_log("Ошибка БД: " . $e->getMessage());
+    }
+
+    if ($textMessageR === "/menu") {
+        $keyboard = getMainMenu();
+        sendMessageWithKeyboard($TG_USER_ID, "Выберите категорию:", $keyboard);
+    } elseif ($textMessageR === "/help") {
+        $keyboard = [
+            "inline_keyboard" => [
+                [["text" => "Справка", "url" => "https://example.com/help"]]
+            ]
+        ];
+        sendMessageWithKeyboard($TG_USER_ID, "Нажмите кнопку ниже, чтобы получить справку:", $keyboard);
+    }
+}
+
+function processCallback($callback) {
+    global $pdo;
+    $TG_USER_ID = $callback['message']['chat']['id'];
+    $callbackData = $callback['data'];
+
+    if ($callbackData === "cart") {
+        $stmt = $pdo->prepare("SELECT item, price FROM orders WHERE user_id = :user_id");
+        $stmt->execute(["user_id" => $TG_USER_ID]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (empty($items)) {
+            sendMessage($TG_USER_ID, "Ваша корзина пуста.");
+        } else {
+            $totalPrice = 0;
+            $cartText = "Ваши товары:\n";
+            foreach ($items as $item) {
+                $cartText .= "{$item['item']} - {$item['price']}₽\n";
+                $totalPrice += $item['price'];
+            }
+            $cartText .= "\nИтоговая цена: {$totalPrice}₽";
+            sendMessage($TG_USER_ID, $cartText);
+        }
+    } elseif ($callbackData === "clear_cart") {
+        $stmt = $pdo->prepare("DELETE FROM orders WHERE user_id = :user_id");
+        $stmt->execute(["user_id" => $TG_USER_ID]);
+        sendMessage($TG_USER_ID, "Корзина очищена.");
+    } elseif (isset(getMenuOptions()[$callbackData])) {
+        $keyboard = ["inline_keyboard" => [getMenuOptions()[$callbackData]]];
+        sendMessageWithKeyboard($TG_USER_ID, "Выберите вариант:", $keyboard);
+    } else {
+        $prices = [
+            "Маргарита" => 500, "Пепперони" => 600,
+            "Чизбургер" => 300, "БигМак" => 350,
+            "Филадельфия" => 700, "Калифорния" => 650,
+            "Кола" => 150, "Сок" => 200
+        ];
+        if (isset($prices[$callbackData])) {
+            $stmt = $pdo->prepare("INSERT INTO orders (user_id, item, price) VALUES (:user_id, :item, :price)");
+            $stmt->execute(["user_id" => $TG_USER_ID, "item" => $callbackData, "price" => $prices[$callbackData]]);
+            sendMessage($TG_USER_ID, "Добавлено в корзину: $callbackData ({$prices[$callbackData]}₽)");
+        }
+    }
+}
+
+function sendMessageWithKeyboard($chatId, $text, $keyboard) {
+    sendMessage($chatId, $text, json_encode($keyboard));
+}
+
+function sendMessage($chatId, $text, $keyboard = null) {
+    $data = [
+        'chat_id' => $chatId,
+        'text' => $text,
+        'reply_markup' => $keyboard
+    ];
+    file_get_contents("https://api.telegram.org/bot" . TG_TOKEN . "/sendMessage?" . http_build_query($data));
+}
+
 ?>

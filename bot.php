@@ -1,181 +1,193 @@
 <?php
 
-set_time_limit(0); // Отключаем ограничение по времени
+set_time_limit(0);
 
 define("TG_TOKEN", "7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4");
-define("OFFSET_FILE", "last_update.txt"); // Файл для хранения последнего update_id
+define("OFFSET_FILE", "last_update.txt");
 
-// Читаем последний обработанный update_id (если есть)
-$lastUpdateId = 0;
-if (file_exists(OFFSET_FILE)) {
-    $lastUpdateId = (int) file_get_contents(OFFSET_FILE);
+// Подключение к базе данных
+try {
+    $pdo = new PDO("mysql:host=localhost;dbname=telegram_bott;charset=utf8", "root", "", [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+    ]);
+} catch (PDOException $e) {
+    exit("Ошибка подключения к БД: " . $e->getMessage());
 }
 
+$lastUpdateId = file_exists(OFFSET_FILE) ? (int) file_get_contents(OFFSET_FILE) : 0;
+
 while (true) {
-    // Получаем ТОЛЬКО новые сообщения
-    $urlQueryTE = "https://api.telegram.org/bot7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4/getUpdates?offset=" . ($lastUpdateId + 1);
-
-    // Инициализация cURL
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $urlQueryTE);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); // Получать ответ как строку
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Временно отключаем проверку сертификата
-    $response = curl_exec($ch); // Выполняем запрос
-    if (curl_errno($ch)) {
-        echo 'cURL error: ' . curl_error($ch);
-    }
-
-    curl_close($ch); // Закрываем сессию
-
+    $urlQueryTE = "https://api.telegram.org/bot" . TG_TOKEN . "/getUpdates?offset=" . ($lastUpdateId + 1);
+    $response = file_get_contents($urlQueryTE);
     $data = json_decode($response, true);
 
     if (!empty($data['result'])) {
         foreach ($data['result'] as $update) {
             $updateId = $update['update_id'];
-
-            // Проверяем, чтобы update_id был больше последнего сохраненного
             if ($updateId > $lastUpdateId) {
-                $lastUpdateId = $updateId; // Обновляем последний update_id
-
-                // ОБРАБОТКА СООБЩЕНИЙ //
-                // Инициализация переменной callbackData/TG_USER_ID
-                $callbackData = null;
-                $TG_USER_ID = null;
-                if (isset($update['message']['text']) && isset($update['message']['chat']['id'])) {
-                    $textMessageR = $update['message']['text']; // Текст сообщения
-                    $TG_USER_ID = $update['message']['chat']['id']; // ID пользователя
-                    $messageId = $update['message']['message_id'];
-                    echo "Получено сообщение: " . $textMessageR . "\n";
-                    // Проверка на наличие callback_query
-                    if (isset($update['callback_query']) && isset($update['callback_query']['data'])) {
-                        $TG_USER_ID = $update['callback_query']['chat']['id'];
-                        $callbackData = $update['callback_query']['data'];  // Получаем данные callback
-                    }
-                   
-
-                    // Команда /info
-                    if ($textMessageR === "/info") {
-                        $data = [
-                            'chat_id' => $TG_USER_ID,
-                            'text' => "Этот бот позволяет выбирать товары, добавлять их в корзину, оплачивать и получать официальные чеки. Он также уведомляет вас и администратора о статусе заказа."
-                        ];
-                        sendMessage($data); // Отправляем сообщение пользователю
-                    }
-                    
-                    
-                    // Команда /menu
-                    if ($textMessageR === "/menu") {
-                        $keyboard = [
-                            "inline_keyboard" => [
-                                [
-                                    ["text" => "Пицца", "callback_data" => "pizza"],
-                                    ["text" => "Бургер", "callback_data" => "burger"],
-                                    ["text" => "Суши", "callback_data" => "sushi"],
-                                    ["text" => "Напитки", "callback_data" => "drinks"]
-                                ],
-                                [
-                                    ["text" => "Наш сайт", "url" => "https://www.youtube.com/watch?v=jfKfPfyJRdk"],
-                                    ["text" => "Поддержка", "url" => "https://www.youtube.com/watch?v=jfKfPfyJRdk"]
-                                ]
-                            ]
-                        ];
-
-                        $data = [
-                            'chat_id' => $TG_USER_ID,
-                            'text' => "Выберите что хотите взять:",
-                            'reply_markup' => json_encode($keyboard),
-                        ];
-                        sendMessage($data); // Отправляем меню пользователю
-                    }
-                }
-            
-                // Обработка callback_query, если есть
-
-                // Инициализация переменной перед проверкой
-                $responseText = ''; // Убедитесь, что переменная инициализирована перед использованием
-
-                if ($callbackData !== null) {
-                
-                    switch ($callbackData) {
-                        case "pizza":
-                            $responseText = "Вы выбрали пиццу!";
-                            break;
-                        case "burger":
-                            $responseText = "Вы выбрали бургер!";
-                            break;
-                        case "sushi":
-                            $responseText = "Вы выбрали суши!";
-                            break;
-                        case "drinks":
-                            $responseText = "Вы выбрали напитки!";
-                            break;
-
-                    }
-                }
-
-                    // Редактируем сообщение с выбранным товаром
-                    $data = [
-                        'chat_id' => $TG_USER_ID,
-                        'message_id' => $messageId,
-                        'text' => $responseText,
-                    ];
-                    sendMessage($data); // Редактируем сообщение
-                }
-            
-                // Сохраняем последний update_id в файл, чтобы избежать повторов
+                $lastUpdateId = $updateId;
                 file_put_contents(OFFSET_FILE, $lastUpdateId);
+                
+                if (isset($update['message']['text'], $update['message']['chat']['id'])) {
+                    processMessage($update['message']);
+                }
+                if (isset($update['callback_query'])) {
+                    processCallback($update['callback_query']);
+                }
             }
         }
+    }
+    sleep(2);
 }
 
-    sleep(2); // Ждем 2 секунды перед следующим запросом
-
-
-// Функция для отправки сообщения
-function sendMessage($data) {
-    $urlQuery = "https://api.telegram.org/bot7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4/sendMessage";
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $urlQuery);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); // Получаем ответ как строку
-    curl_setopt($ch, CURLOPT_POST, 1); // Это POST-запрос
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); // Передача данных
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Временно отключаем проверку сертификата
-    curl_exec($ch); // Выполняем запрос
-    curl_close($ch); // Закрываем сессию
-}
-
-// Функция для редактирования текста сообщения
-function editMessageText($data) {
-    $urlQuery = "https://api.telegram.org/bot7992724027:AAG--G_-NV7YZ74VTce2egibEJLjst-sli4/editMessageText";
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $urlQuery);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); // Получаем ответ как строку
-    curl_setopt($ch, CURLOPT_POST, 1); // Это POST-запрос
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); // Передача данных
-    curl_exec($ch); // Выполняем запрос
-    curl_close($ch); // Закрываем сессию
-}
-if (curl_errno($ch)) {
-    error_log("cURL error: " . curl_error($ch));
-}
-
+function processMessage($message) {
+    global $pdo;
+    $TG_USER_ID = $message['chat']['id'];
+    $TG_USERNAME = $message['chat']['username'] ?? 'unknown';
+    $textMessageR = $message['text'];
     
+    try {
+        $stmt = $pdo->prepare("INSERT INTO users (user_id, username) VALUES (:user_id, :username) ON DUPLICATE KEY UPDATE username = :username");
+        $stmt->execute(["user_id" => $TG_USER_ID, "username" => $TG_USERNAME]);
+    } catch (PDOException $e) {
+        error_log("Ошибка БД: " . $e->getMessage());
+    }
 
-   
+    if ($textMessageR === "/menu") {
+        $keyboard = getMainMenu();
+        sendMessageWithKeyboard($TG_USER_ID, "Выберите категорию:", $keyboard);
+    }
+}
 
+function processCallback($callback) {
+    global $pdo;
+    $TG_USER_ID = $callback['message']['chat']['id'];
+    $callbackData = $callback['data'];
 
-  
+    if ($callbackData === "cart") {
+        $stmt = $pdo->prepare("SELECT item, price FROM orders WHERE user_id = :user_id");
+        $stmt->execute(["user_id" => $TG_USER_ID]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (empty($items)) {
+            sendMessage($TG_USER_ID, "Ваша корзина пуста.");
+        } else {
+            $totalPrice = 0;
+            $cartText = "Ваши товары:\n";
+            foreach ($items as $item) {
+                $cartText .= "{$item['item']} - {$item['price']}₽\n";
+                $totalPrice += $item['price'];
+            }
+            $cartText .= "\nИтоговая цена: {$totalPrice}₽";
+            sendMessage($TG_USER_ID, $cartText);
+        }
+    } elseif ($callbackData === "clear_cart") {
+        $stmt = $pdo->prepare("DELETE FROM orders WHERE user_id = :user_id");
+        $stmt->execute(["user_id" => $TG_USER_ID]);
+        sendMessage($TG_USER_ID, "Корзина очищена.");
+    } elseif (isset(getMenuOptions()[$callbackData])) {
+        $keyboard = ["inline_keyboard" => [getMenuOptions()[$callbackData]]];
+        sendMessageWithKeyboard($TG_USER_ID, "Выберите вариант:", $keyboard);
+    } else {
+        $prices = [
+            "Маргарита" => 500, "Пепперони" => 600,
+            "Чизбургер" => 300, "БигМак" => 350,
+            "Филадельфия" => 700, "Калифорния" => 650,
+            "Кола" => 150, "Сок" => 200
+        ];
+        if (isset($prices[$callbackData])) {
+            $stmt = $pdo->prepare("INSERT INTO orders (user_id, item, price) VALUES (:user_id, :item, :price)");
+            $stmt->execute(["user_id" => $TG_USER_ID, "item" => $callbackData, "price" => $prices[$callbackData]]);
+            sendMessage($TG_USER_ID, "Добавлено в корзину: $callbackData ({$prices[$callbackData]}₽)");
+        }
+    }
+}
+
+function getMainMenu() {
+    return [
+        "inline_keyboard" => [
+            [
+                ["text" => "Пицца", "callback_data" => "pizza"],
+                ["text" => "Бургер", "callback_data" => "burger"],
+                ["text" => "Суши", "callback_data" => "sushi"],
+                ["text" => "Напитки", "callback_data" => "drinks"]
+            ],
+            [
+                ["text" => "🛒 Корзина", "callback_data" => "cart"],
+                ["text" => "❌ Очистить корзину", "callback_data" => "clear_cart"]
+            ]
+        ]
+    ];
+}
+
+function getMenuOptions() {
+    return [
+        "pizza" => [
+            ["text" => "Маргарита - 500₽", "callback_data" => "Маргарита"],
+            ["text" => "Пепперони - 600₽", "callback_data" => "Пепперони"]
+        ],
+        "burger" => [
+            ["text" => "Чизбургер - 300₽", "callback_data" => "Чизбургер"],
+            ["text" => "БигМак - 350₽", "callback_data" => "БигМак"]
+        ],
+        "sushi" => [
+            ["text" => "Филадельфия - 700₽", "callback_data" => "Филадельфия"],
+            ["text" => "Калифорния - 650₽", "callback_data" => "Калифорния"]
+        ],
+        "drinks" => [
+            ["text" => "Кола - 150₽", "callback_data" => "Кола"],
+            ["text" => "Сок - 200₽", "callback_data" => "Сок"]
+        ]
+    ];
+}
+
+function sendMessageWithKeyboard($chatId, $text, $keyboard) {
+    sendMessage($chatId, $text, json_encode($keyboard));
+}
+
+function sendMessage($chatId, $text, $keyboard = null) {
+    $data = [
+        'chat_id' => $chatId,
+        'text' => $text,
+        'reply_markup' => $keyboard
+    ];
+    file_get_contents("https://api.telegram.org/bot" . TG_TOKEN . "/sendMessage?" . http_build_query($data));
+}
+while (true) {
+    $urlQueryTE = "https://api.telegram.org/bot" . TG_TOKEN . "/getUpdates?offset=" . ($lastUpdateId + 1);
+    $response = file_get_contents($urlQueryTE);
     
+    if ($response === false) {
+        error_log("Ошибка запроса к Telegram API");
+        sleep(2);
+        continue;
+    }
 
+    $data = json_decode($response, true);
+    
+    if ($data === null) {
+        error_log("Ошибка декодирования JSON: " . json_last_error_msg());
+        sleep(2);
+        continue;
+    }
 
+    if (!empty($data['result'])) {
+        foreach ($data['result'] as $update) {
+            $updateId = $update['update_id'];
+            if ($updateId > $lastUpdateId) {
+                $lastUpdateId = $updateId;
+                file_put_contents(OFFSET_FILE, $lastUpdateId);
+                
+                if (isset($update['message']['text'], $update['message']['chat']['id'])) {
+                    processMessage($update['message']);
+                }
+                if (isset($update['callback_query'])) {
+                    processCallback($update['callback_query']);
+                }
+            }
+        }
+    }
+    sleep(2);
+}
 
-
-//---------------------------------//
-
-
-
-
-
-// t: && cd T:\OSPanel\domains\Doonpablobot && php bot.php 
-// cd C:\ospanel\domains\Doonpablobot && php bot.php
 ?>
