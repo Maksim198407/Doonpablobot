@@ -106,6 +106,7 @@ function processCallback($callback) {
     $TG_USER_ID = $callback['message']['chat']['id'];
     $callbackData = $callback['data'];
 
+    
     // Если выбран пункт "cart" - выводим содержимое корзины
     if ($callbackData === "cart") {
         $stmt = $pdo->prepare("SELECT item, price FROM orders WHERE user_id = :user_id");
@@ -125,6 +126,15 @@ function processCallback($callback) {
             sendMessage($TG_USER_ID, $cartText);
         }
     } 
+
+    if ($callbackData === 'checkout') {
+        // Сообщение, которое будет отправлено пользователю
+        $message = "Ваш заказ принят!";
+        
+        // Отправка сообщения пользователю через Telegram API
+        sendMessage($TG_USER_ID, $message);
+    }
+
     // Если выбран пункт "clear_cart" - очищаем корзину
     elseif ($callbackData === "clear_cart") {
         $stmt = $pdo->prepare("DELETE FROM orders WHERE user_id = :user_id");
@@ -269,7 +279,5 @@ while (true) {
     }
     sleep(2);
 }
-
-// Пример запуска бота из консоли (закомментирован)
 //t: && cd \ospanel\domains\Doonpablobot && php bot.php
 ?>
